@@ -1,0 +1,13 @@
+const hre = require("hardhat");
+
+async function main() {
+  const Vault = await hre.ethers.getContractFactory("TimeLockVault");
+  const vault = await Vault.deploy();
+  await vault.deployed();
+  console.log("TimeLockVault deployed to:", vault.address);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
