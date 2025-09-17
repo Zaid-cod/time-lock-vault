@@ -1,0 +1,58 @@
+const { expect } = require("chai");
+const { ethers } = require("hardhat");
+
+describe("TimeLockVault", function () {
+  let vault, token, owner, addr1;
+  beforeEach(async () => {
+    [owner, addr1] = await ethers.getSigners();
+    const Vault = await ethers.getContractFactory("TimeLockVault");
+    vault = await Vault.deploy();
+    await vault.deployed();
+
+    const Token = await ethers.getContractFactory("TestToken");
+    token = await Token.deploy("Test", "TST");
+    await token.deployed();
+  });
+
+  it("ETH deposit and withdraw after unlock", async function() {
+    const now = (await ethers.provider.getBlock("latest")).timestamp;
+    const unlock = now + 1000;
+    await vault.connect(addr1).depositETH(unlock, { value: ethers.utils.parseEther("1") });
+    const locks = await vault.getLocksOf(addr1.address);
+    expect(locks.length).to.equal(1);
+    const lockId = locks[0];
+    const lock = await vault.locks(lockId);
+    expect(lock.amount).to.equal(ethers.utils.parseEther("1"));
+
+    await expect(vault.connect(addr1).withdraw(lockId)).to.be.revertedWith("Locked");
+
+    await ethers.provider.send("evm_increaseTime", [1001]);
+    await ethers.provider.send("evm_mine");
+
+    await expect(vault.connect(addr1).withdraw(lockId)).to.emit(vault, "Withdrawn");
+    const lockAfter = await vault.locks(lockId);
+    expect(lockAfter.withdrawn).to.equal(true);
+    expect(await ethers.provider.getBalance(vault.address)).to.equal(0);
+  });
+
+  it("ERC20 deposit and withdraw", async function() {
+    await token.mint(addr1.address, ethers.utils.parseUnits("1000", 18));
+    await token.connect(addr1).approve(vault.address, ethers.utils.parseUnits("1000", 18));
+    const now = (await ethers.provider.getBlock("latest")).timestamp;
+    const unlock = now + 1000;
+    await vault.connect(addr1).depositERC20(token.address, ethers.utils.parseUnits("100", 18), unlock);
+    const locks = await vault.getLocksOf(addr1.address);
+    const lockId = locks[0];
+    const lock = await vault.locks(lockId);
+    expect(lock.amount).to.equal(ethers.utils.parseUnits("100", 18));
+
+    await expect(vault.connect(addr1).withdraw(lockId)).to.be.revertedWith("Locked");
+
+    await ethers.provider.send("evm_increaseTime", [1001]);
+    await ethers.provider.send("evm_mine");
+
+    await expect(vault.connect(addr1).withdraw(lockId)).to.emit(vault, "Withdrawn");
+    const finalBal = await token.balanceOf(addr1.address);
+    expect(finalBal).to.equal(ethers.utils.parseUnits("1000", 18));
+  });
+});
